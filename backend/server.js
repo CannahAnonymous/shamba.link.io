@@ -32,6 +32,53 @@ const seedListings = [
   { id: "groundnut-tabora", crop: "Groundnut", localName: "Karanga", role: "agent", location: "Tabora", distanceKm: 38, quantity: "520 kg", priceTshPerKg: 2200, status: "Route forming", description: "Shelled food-grade groundnuts" }
 ];
 
+function normalizeContact(type, value) {
+  const contact = value.trim();
+  if (type === "phone") {
+    const digits = contact.replace(/\D/g, "");
+    if (digits.startsWith("0")) return `+255${digits.slice(1)}`;
+    if (digits.startsWith("255")) return `+${digits}`;
+    return contact.startsWith("+") ? `+${digits}` : digits;
+  }
+  return contact.toLowerCase();
+}
+
+function hashValue(value) {
+  return createHash("sha256").update(`${otpSecret}:${value}`).digest("hex");
+}
+
+function sendTwilioMessage(recipient, message) {
+  const target = new URL(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(twilioAccountSid)}/Messages.json`);
+  const body = new URLSearchParams({ To: recipient, From: twilioFromNumber, Body: message }).toString();
+  return new Promise((resolve, reject) => {
+    const request = httpsRequest(target, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString("base64")}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Length": Buffer.byteLength(body)
+      }
+    }, (response) => {
+      let raw = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => { raw += chunk; });
+      response.on("end", () => {
+        let result;
+        try { result = JSON.parse(raw); } catch { result = {}; }
+        if (response.statusCode >= 200 && response.statusCode < 300) resolve();
+        else reject(new Error(result.message || `Twilio rejected the message (HTTP ${response.statusCode}).`));
+      });
+    });
+    request.on("error", reject);
+    request.write(body);
+    request.end();
+  });
+}
+
+async function sendVerificationCode(contact, code) {
+  await sendTwilioMessage(contact, `Your ShambaLink verification code is ${code}. It expires in 10 minutes.`);
+}
+
 async function loadStore() {
   try {
     const store = JSON.parse(await readFile(dataFile, "utf8"));
@@ -73,54 +120,9 @@ function notifyInterestBySms(interest) {
     throw new Error("SMS notification requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER");
   }
 
-  function normalizeContact(type, value) {
-    const contact = value.trim();
-    if (type === "phone") {
-      const digits = contact.replace(/\D/g, "");
-      if (digits.startsWith("0")) return `+255${digits.slice(1)}`;
-      if (digits.startsWith("255")) return `+${digits}`;
-      return contact.startsWith("+") ? `+${digits}` : digits;
-    }
-    return contact.toLowerCase();
-  }
-
-  function hashValue(value) {
-    return createHash("sha256").update(`${otpSecret}:${value}`).digest("hex");
-  }
-
-  function sendVerificationCode(contact, code) {
-    const target = new URL(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(twilioAccountSid)}/Messages.json`);
-    const body = new URLSearchParams({
-      To: contact,
-      From: twilioFromNumber,
-      Body: `Your ShambaLink verification code is ${code}. It expires in 10 minutes.`
-    }).toString();
-    const request = httpsRequest(target, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString("base64")}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Content-Length": Buffer.byteLength(body)
-      }
-    });
-    request.on("error", (error) => console.error("Verification SMS failed:", error.message));
-    request.write(body);
-    request.end();
-  }
-  const target = new URL(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(twilioAccountSid)}/Messages.json`);
   const message = `New ShambaLink ${interest.role} joined: ${interest.name}, ${interest.location}. Contact: ${interest.contact}`;
-  const body = new URLSearchParams({ To: twilioToNumber, From: twilioFromNumber, Body: message }).toString();
-  const request = httpsRequest(target, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString("base64")}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-      "Content-Length": Buffer.byteLength(body)
-    }
-  });
-  request.on("error", (error) => console.error("SMS notification failed:", error.message));
-  request.write(body);
-  request.end();
+  const request = sendTwilioMessage(twilioToNumber, message);
+  request.catch((error) => console.error("SMS notification failed:", error.message));
 }
 
 function send(response, status, body) {
@@ -181,7 +183,14 @@ const server = createServer(async (request, response) => {
       const challenge = { id: randomUUID(), contact, contactType, codeHash: hashValue(code), expiresAt: Date.now() + 600000, attempts: 0 };
       store.otpChallenges = [...(store.otpChallenges || []).filter((item) => item.expiresAt > Date.now() && item.contact !== contact), challenge];
       await saveStore(store);
-      sendVerificationCode(contact, code);
+      try {
+        await sendVerificationCode(contact, code);
+      } catch (error) {
+        store.otpChallenges = store.otpChallenges.filter((item) => item.id !== challenge.id);
+        await saveStore(store);
+        console.error("Verification SMS failed:", error.message);
+        return send(response, 502, { error: "Twilio could not send the verification code. Check the number and try again." });
+      }
       return send(response, 201, { challengeId: challenge.id, message: "Verification code sent." });
     }
     if (request.method === "POST" && url.pathname === "/api/auth/verify-code") {

@@ -1,0 +1,45 @@
+name: ShambaLink backend checks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-check.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-check.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check backend syntax
+        run: node --check backend/server.js
+      - name: Smoke-test phone validation
+        shell: bash
+        run: |
+          export PORT=18787
+          export DATA_FILE="$RUNNER_TEMP/shambalink-test-store.json"
+          node backend/server.js > "$RUNNER_TEMP/shambalink-api.log" 2>&1 &
+          api_pid=$!
+          trap 'kill "$api_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..20}; do
+            if curl --silent --fail http://127.0.0.1:18787/api/health; then break; fi
+            sleep 1
+          done
+          invalid_status=$(curl --silent --output /dev/null --write-out "%{http_code}" \
+            --request POST http://127.0.0.1:18787/api/auth/request-code \
+            --header "Content-Type: application/json" \
+            --data '{"contactType":"phone","contact":"12"}')
+          valid_status=$(curl --silent --output /dev/null --write-out "%{http_code}" \
+            --request POST http://127.0.0.1:18787/api/auth/request-code \
+            --header "Content-Type: application/json" \
+            --data '{"contactType":"phone","contact":"0741998751"}')
+          test "$invalid_status" = "422"
+          test "$valid_status" = "503"
