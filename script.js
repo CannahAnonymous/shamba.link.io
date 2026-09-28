@@ -46,9 +46,7 @@
   const registrationGate = document.querySelector("#registration-gate");
   const services = document.querySelector("[data-services]");
   const registrationForm = document.querySelector("#registration-form");
-  const verificationForm = document.querySelector("#verification-form");
   const registrationKey = "shambalink-member-v2";
-  let challengeId = "";
   function apiMessage(response, fallback) {
     return response.text().then((text) => {
       try { return { ok: response.ok, data: JSON.parse(text) }; } catch { return { ok: false, data: { error: fallback } }; }
@@ -60,6 +58,14 @@
     if (digits.startsWith("255")) return `+${digits}`;
     return value.trim().startsWith("+") ? `+${digits}` : digits;
   }
+  document.querySelectorAll("input[name=contactType]").forEach((input) => input.addEventListener("change", () => {
+    const contact = document.querySelector("#register-contact");
+    const phone = input.value === "phone" && input.checked;
+    contact.type = phone ? "tel" : "email";
+    contact.autocomplete = phone ? "tel" : "email";
+    contact.placeholder = phone ? "+255 741 998 751" : "name@example.com";
+    document.querySelector('label[for="register-contact"]').textContent = phone ? "Phone number" : "Email address";
+  }));
   function openServices() {
     if (registrationGate) registrationGate.hidden = true;
     if (services) services.hidden = false;
@@ -91,53 +97,32 @@
       status.classList.add("is-error");
       return;
     }
-    if (!apiBase) {
-      status.textContent = currentLanguage === "sw" ? "Huduma ya uthibitishaji bado haijaunganishwa." : "Phone verification is not connected yet. Please configure the ShambaLink API.";
-      status.classList.add("is-error");
-      return;
-    }
     try {
       const normalized = contactType === "phone" ? normalizedPhone(contact.value) : contact.value.trim().toLowerCase();
-      const response = await fetch(`${apiBase}/api/auth/request-code`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contactType, contact: normalized, role: registrationForm.querySelector("input[name=role]:checked").value }) });
-      const result = await apiMessage(response, "Verification is unavailable.");
-      if (!result.ok) throw new Error(result.data.error || "Verification is unavailable.");
-      challengeId = result.data.challengeId;
-      registrationForm.hidden = true;
-      verificationForm.hidden = false;
+      const role = registrationForm.querySelector("input[name=role]:checked").value;
+      const profile = { name: name.value.trim(), role, contact: normalized, contactType, registeredAt: new Date().toISOString() };
+      if (apiBase) {
+        const response = await fetch(`${apiBase}/api/auth/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...profile, password: password.value })
+        });
+        const result = await apiMessage(response, "Registration is unavailable.");
+        if (!result.ok) throw new Error(result.data.error || "Registration is unavailable.");
+        profile.id = result.data.user.id;
+        status.textContent = currentLanguage === "sw" ? "Umejiunga na ShambaLink." : "You have joined ShambaLink.";
+      } else {
+        status.textContent = currentLanguage === "sw"
+          ? "Wasifu umehifadhiwa kwenye kifaa hiki; hifadhi ya seva itaunganishwa baadaye."
+          : "Profile saved on this device. Server storage will be available when the API is connected.";
+      }
+      localStorage.setItem(registrationKey, JSON.stringify(profile));
       status.classList.remove("is-error");
-      status.textContent = currentLanguage === "sw" ? "Nambari ya uthibitisho imetumwa." : "A verification code has been sent.";
-      document.querySelector("#verification-code").focus();
+      openServices();
     } catch (error) {
       status.textContent = error.message;
       status.classList.add("is-error");
     }
-  });
-  verificationForm?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const code = document.querySelector("#verification-code").value.trim();
-    const error = document.querySelector("#verification-code-error");
-    const status = document.querySelector("#registration-status");
-    if (!/^\d{6}$/.test(code)) { error.textContent = currentLanguage === "sw" ? "Ingiza tarakimu 6." : "Enter the 6-digit code."; return; }
-    try {
-      const verified = await fetch(`${apiBase}/api/auth/verify-code`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ challengeId, code }) });
-      const verifiedResult = await apiMessage(verified, "Verification failed.");
-      if (!verifiedResult.ok) throw new Error(verifiedResult.data.error || "Verification failed.");
-      const name = document.querySelector("#register-name").value.trim();
-      const role = registrationForm.querySelector("input[name=role]:checked").value;
-      const contact = document.querySelector("#register-contact").value.trim();
-      const password = document.querySelector("#register-password").value;
-      const created = await fetch(`${apiBase}/api/auth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ verificationToken: verifiedResult.data.verificationToken, name, role, password }) });
-      const createdResult = await apiMessage(created, "Registration failed.");
-      if (!createdResult.ok) throw new Error(createdResult.data.error || "Registration failed.");
-      localStorage.setItem(registrationKey, JSON.stringify({ id: createdResult.data.user.id, name, role, contact, registeredAt: new Date().toISOString() }));
-      status.textContent = currentLanguage === "sw" ? "Wasifu wako umethibitishwa. Karibu ShambaLink." : "Your profile is verified. Welcome to ShambaLink.";
-      openServices();
-    } catch (error) { status.textContent = error.message; status.classList.add("is-error"); }
-  });
-  document.querySelector("#verification-back")?.addEventListener("click", () => {
-    verificationForm.hidden = true;
-    registrationForm.hidden = false;
-    document.querySelector("#registration-status").textContent = "";
   });
 
   const search = document.querySelector("#produce-search");
@@ -249,12 +234,14 @@
     "What grows in Tanzania?": "Nini hulimwa Tanzania?", "How do I list maize?": "Nitawekaje mahindi?", "Help me buy rice": "Nisaidie kununua mpunga", "Ask a question…": "Uliza swali…",
     "Better routes for better harvests.": "Njia bora kwa mavuno bora.", "Food crops:": "Mazao ya chakula:", "Cassava / Muhogo": "Muhogo", "Beans / Maharage": "Maharage", "Banana / Ndizi": "Ndizi", "Potato / Viazi": "Viazi", "Sorghum / Mtama": "Mtama", "Millet / Ulezi": "Ulezi", "Tomato / Nyanya": "Nyanya", "Onion / Vitunguu": "Vitunguu", "Sweet potato / Viazi vitamu": "Viazi vitamu", "Groundnut / Karanga": "Karanga", "Sesame / Ufuta": "Ufuta", "Sunflower / Alizeti": "Alizeti", "Wheat / Ngano": "Ngano",     "Selected crop": "Zao lililochaguliwa", "Market": "Soko", "Available": "Inapatikana", "Price": "Bei",
     "Welcome to ShambaLink": "Karibu ShambaLink", "Your harvest network": "Mtandao wako wa mavuno", "starts here.": "unaanza hapa.",
-    "Create your free profile before browsing services, prices, and routes across Tanzania.": "Unda wasifu wako bila malipo kabla ya kuona huduma, bei na njia za biashara Tanzania.",
-    "Full name or business": "Jina kamili au biashara", "Email address": "Barua pepe", "Create password": "Unda nenosiri",
+    "Create a profile to browse services, prices, and routes across Tanzania. Phone verification is paused for now.": "Unda wasifu ili kuona huduma, bei na njia za biashara Tanzania. Uthibitishaji wa simu umesitishwa kwa sasa.",
+    "Full name or business": "Jina kamili au biashara", "Email address": "Barua pepe", "Phone number": "Nambari ya simu", "Create password": "Unda nenosiri",
+    "Choose contact type": "Chagua aina ya mawasiliano", "Phone": "Simu",
     "I am joining as": "Ninajiunga kama", "Farmer": "Mkulima", "Agent": "Wakala", "Buyer": "Mnunuzi",
-    "I agree to the ShambaLink terms and privacy notice.": "Ninakubali masharti na taarifa ya faragha ya ShambaLink.", "Create my profile": "Unda wasifu wangu",
+    "I agree to the ShambaLink terms and privacy notice.": "Ninakubali masharti na taarifa ya faragha ya ShambaLink.", "Join ShambaLink": "Jiunge na ShambaLink",
     "Please complete this field correctly.": "Tafadhali jaza sehemu hii kwa usahihi.", "Check your details and try again.": "Kagua taarifa zako kisha ujaribu tena.",
-    "Your profile is ready. Welcome to ShambaLink.": "Wasifu wako uko tayari. Karibu ShambaLink."
+    "Profile saved on this device. Server storage will be available when the API is connected.": "Wasifu umehifadhiwa kwenye kifaa hiki; hifadhi ya seva itapatikana API ikiunganishwa.",
+    "You have joined ShambaLink.": "Umejiunga na ShambaLink."
   };
   const translatedAttributes = {
     "aria-label": { "Primary navigation": "Menyu kuu", "Language selector": "Kichagua lugha", "Market snapshot": "Muhtasari wa soko", "Open live market board": "Fungua ubao wa soko", "Indicative crop price trend": "Mwelekeo wa bei za mazao", "Choose your role": "Chagua nafasi yako", "ShambaLink AI assistant": "Msaidizi wa ShambaLink AI", "Close assistant": "Funga msaidizi", "Send question": "Tuma swali" },

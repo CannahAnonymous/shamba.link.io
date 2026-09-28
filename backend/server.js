@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash, randomBytes, randomInt, randomUUID, scryptSync } from "node:crypto";
+import { randomBytes, randomUUID, scryptSync } from "node:crypto";
 import { request as httpsRequest } from "node:https";
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -15,7 +15,6 @@ const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID || "";
 const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN || "";
 const twilioFromNumber = process.env.TWILIO_FROM_NUMBER || "";
 const twilioToNumber = process.env.TWILIO_TO_NUMBER || "+255741998751";
-const otpSecret = process.env.OTP_SECRET || randomBytes(32).toString("hex");
 const seedListings = [
   { id: "maize-iringa", crop: "Maize", localName: "Mahindi", role: "farmer", location: "Iringa", distanceKm: 24, quantity: "2.4 tonnes", priceTshPerKg: 1150, status: "Ready now", description: "Dry grain, bagged and sorted" },
   { id: "rice-morogoro", crop: "Rice", localName: "Mpunga", role: "agent", location: "Morogoro", distanceKm: 41, quantity: "680 bags", priceTshPerKg: 2400, status: "Route forming", description: "Clean, locally milled grain" },
@@ -41,10 +40,6 @@ function normalizeContact(type, value) {
     return contact.startsWith("+") ? `+${digits}` : digits;
   }
   return contact.toLowerCase();
-}
-
-function hashValue(value) {
-  return createHash("sha256").update(`${otpSecret}:${value}`).digest("hex");
 }
 
 function sendTwilioMessage(recipient, message) {
@@ -73,10 +68,6 @@ function sendTwilioMessage(recipient, message) {
     request.write(body);
     request.end();
   });
-}
-
-async function sendVerificationCode(contact, code) {
-  await sendTwilioMessage(contact, `Your ShambaLink verification code is ${code}. It expires in 10 minutes.`);
 }
 
 async function loadStore() {
@@ -168,59 +159,28 @@ const server = createServer(async (request, response) => {
       const listings = store.listings.filter((item) => (!role || role === "all" || item.role === role) && (!search || `${item.crop} ${item.localName} ${item.location}`.toLowerCase().includes(search)));
       return send(response, 200, { listings });
     }
-    if (request.method === "POST" && url.pathname === "/api/auth/request-code") {
-      const body = await readBody(request);
-      const contactType = body.contactType === "phone" ? "phone" : body.contactType === "email" ? "email" : "";
-      const contact = typeof body.contact === "string" ? normalizeContact(contactType, body.contact) : "";
-      if (!contactType || contact.length < 5 || (contactType === "phone" && !/^\+?[1-9]\d{7,14}$/.test(contact)) || (contactType === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact))) {
-        return send(response, 422, { error: "Enter a valid email address or international phone number." });
-      }
-      const store = await loadStore();
-      if ((store.users || []).some((user) => user.contact === contact)) return send(response, 409, { error: "This contact is already registered." });
-      if (contactType !== "phone") return send(response, 501, { error: "Email verification is not configured yet. Choose phone to receive an SMS code." });
-      if (!twilioAccountSid || !twilioAuthToken || !twilioFromNumber) return send(response, 503, { error: "Phone verification is temporarily unavailable." });
-      const code = String(randomInt(100000, 1000000));
-      const challenge = { id: randomUUID(), contact, contactType, codeHash: hashValue(code), expiresAt: Date.now() + 600000, attempts: 0 };
-      store.otpChallenges = [...(store.otpChallenges || []).filter((item) => item.expiresAt > Date.now() && item.contact !== contact), challenge];
-      await saveStore(store);
-      try {
-        await sendVerificationCode(contact, code);
-      } catch (error) {
-        store.otpChallenges = store.otpChallenges.filter((item) => item.id !== challenge.id);
-        await saveStore(store);
-        console.error("Verification SMS failed:", error.message);
-        return send(response, 502, { error: "Twilio could not send the verification code. Check the number and try again." });
-      }
-      return send(response, 201, { challengeId: challenge.id, message: "Verification code sent." });
-    }
-    if (request.method === "POST" && url.pathname === "/api/auth/verify-code") {
-      const body = await readBody(request);
-      const store = await loadStore();
-      const challenge = (store.otpChallenges || []).find((item) => item.id === body.challengeId);
-      if (!challenge || challenge.expiresAt < Date.now() || challenge.attempts >= 5) return send(response, 422, { error: "This code has expired. Request a new code." });
-      challenge.attempts += 1;
-      if (hashValue(String(body.code || "")) !== challenge.codeHash) {
-        await saveStore(store);
-        return send(response, 422, { error: "That verification code is not correct." });
-      }
-      challenge.verified = true;
-      challenge.verificationToken = randomUUID();
-      await saveStore(store);
-      return send(response, 200, { verificationToken: challenge.verificationToken });
-    }
     if (request.method === "POST" && url.pathname === "/api/auth/register") {
       const body = await readBody(request);
       const store = await loadStore();
-      const challenge = (store.otpChallenges || []).find((item) => item.verificationToken === body.verificationToken && item.verified);
       const name = typeof body.name === "string" ? body.name.trim() : "";
       const role = ["farmer", "agent", "buyer"].includes(body.role) ? body.role : "";
-      if (!challenge || !name || name.length > 120 || !role) return send(response, 422, { error: "Complete verification and provide a valid name and role." });
-      if ((store.users || []).some((user) => user.contact === challenge.contact)) return send(response, 409, { error: "This contact is already registered." });
-      const user = { id: randomUUID(), name, role, contact: challenge.contact, contactType: challenge.contactType, passwordHash: body.password ? scryptSync(String(body.password), otpSecret, 32).toString("hex") : null, verifiedAt: new Date().toISOString() };
+      const contactType = body.contactType === "phone" ? "phone" : body.contactType === "email" ? "email" : "";
+      const contact = typeof body.contact === "string" && contactType ? normalizeContact(contactType, body.contact) : "";
+      const password = typeof body.password === "string" ? body.password : "";
+      const validContact = contactType === "phone"
+        ? /^\+[1-9]\d{7,14}$/.test(contact)
+        : contactType === "email" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact);
+      if (!name || name.length > 120 || !role || !validContact || password.length < 8 || password.length > 256) {
+        return send(response, 422, { error: "Provide a valid name, role, phone or email, and a password of at least 8 characters." });
+      }
+      const contactExists = (store.users || []).some((user) => user.contact === contact)
+        || (store.interests || []).some((interest) => normalizeContact(interest.contact.includes("@") ? "email" : "phone", interest.contact) === contact);
+      if (contactExists) return send(response, 409, { error: "This contact is already registered." });
+      const passwordSalt = randomBytes(16).toString("hex");
+      const user = { id: randomUUID(), name, role, contact, contactType, passwordSalt, passwordHash: scryptSync(password, passwordSalt, 32).toString("hex"), createdAt: new Date().toISOString() };
       store.users = [...(store.users || []), user];
-      store.otpChallenges = (store.otpChallenges || []).filter((item) => item.id !== challenge.id);
       await saveStore(store);
-      try { notifyInterestBySms({ role, name, location: "Not provided", contact: challenge.contact }); } catch (error) { console.error(error); }
+      try { notifyInterestBySms({ role, name, location: "Not provided", contact }); } catch (error) { console.error(error); }
       return send(response, 201, { user: { id: user.id, name: user.name, role: user.role, contact: user.contact } });
     }
     if (request.method === "POST" && url.pathname === "/api/visits") {

@@ -8,9 +8,7 @@ This small Node.js API provides the first persistent backend for the static site
 - `POST /api/questions` — records an unanswered AI question for the ShambaLink team
 - `POST /api/visits` — records an anonymous page visit
 - `GET /api/visits` — returns recent visits for the owner with `Authorization: Bearer $ADMIN_TOKEN`
-- `POST /api/auth/request-code` — sends a one-time phone verification code
-- `POST /api/auth/verify-code` — verifies the one-time code
-- `POST /api/auth/register` — stores a verified user with a unique contact
+- `POST /api/auth/register` — stores a profile with a unique phone or email and hashed password
 
 ## Run locally
 
@@ -29,7 +27,7 @@ psql "$DATABASE_URL" -f database.sql
 Set `ALLOWED_ORIGIN` to the exact frontend origin rather than `*`.
 Set a long random `ADMIN_TOKEN` to protect the owner visit log. Set `VISIT_WEBHOOK_URL` to an HTTPS webhook for an external notification on each new visit. The webhook receives only the page path, referrer, language, ID, and timestamp.
 For SMS alerts when someone submits the Join ShambaLink form, configure Twilio with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and a verified `TWILIO_FROM_NUMBER`. `TWILIO_TO_NUMBER` defaults to `+255741998751`. Keep these values only in the backend host's secret environment settings; never place them in frontend JavaScript.
-Registration uses the same Twilio credentials to send phone verification codes. Email identifiers are accepted by the data model, but email code delivery is intentionally rejected until an email provider is configured. The API rejects duplicate contacts and stores only a password hash plus the verified profile data.
+Phone verification is paused. Registration currently accepts a phone number or email without a verification code, rejects duplicate contacts, and stores a salted password hash. Re-enable contact verification before treating contact details as verified.
 
 The current frontend remains usable without an API. To connect it, set `window.SHAMBALINK_API_URL` before `script.js` loads, for example:
 

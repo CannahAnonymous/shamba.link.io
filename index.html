@@ -34,19 +34,18 @@ FORM: Marketplace landing page with a role-aware onboarding moment and transpare
         <div class="registration-mark" aria-hidden="true"><img src="shamba-icon.svg" alt="" /></div>
         <p class="stamp stamp-dark">Welcome to ShambaLink</p>
         <h1 id="registration-title">Your harvest network<br /><em>starts here.</em></h1>
-        <p class="registration-lede">Verify one contact before browsing services, prices, and routes across Tanzania.</p>
+        <p class="registration-lede">Create a profile to browse services, prices, and routes across Tanzania. Phone verification is paused for now.</p>
         <form id="registration-form" novalidate>
           <div class="form-field"><label for="register-name">Full name or business</label><input id="register-name" name="name" autocomplete="name" required /><span class="field-error" id="register-name-error"></span></div>
-          <div class="registration-role"><span>Choose contact type</span><label><input type="radio" name="contactType" value="phone" checked /> Phone / SMS</label><label><input type="radio" name="contactType" value="email" /> Email</label></div>
+          <div class="registration-role"><span>Choose contact type</span><label><input type="radio" name="contactType" value="phone" checked /> Phone</label><label><input type="radio" name="contactType" value="email" /> Email</label></div>
           <div class="form-field"><label for="register-contact">Phone number or email</label><input id="register-contact" name="contact" type="tel" autocomplete="tel" placeholder="+255 741 998 751" required /><span class="field-error" id="register-contact-error"></span></div>
           <div class="form-field"><label for="register-password">Create password</label><input id="register-password" name="password" type="password" minlength="8" autocomplete="new-password" required /><span class="field-error" id="register-password-error"></span></div>
           <div class="registration-role"><span> I am joining as</span><label><input type="radio" name="role" value="farmer" checked /> Farmer</label><label><input type="radio" name="role" value="agent" /> Agent</label><label><input type="radio" name="role" value="buyer" /> Buyer</label></div>
           <label class="terms-check"><input id="register-terms" type="checkbox" required /><span>I agree to the ShambaLink terms and privacy notice.</span></label>
           <span class="field-error" id="register-terms-error"></span>
-          <button class="button button-dark button-full" type="submit">Send verification code <span aria-hidden="true">↗</span></button>
+          <button class="button button-dark button-full" type="submit">Join ShambaLink <span aria-hidden="true">↗</span></button>
           <p id="registration-status" class="registration-status" role="status" aria-live="polite"></p>
         </form>
-        <form id="verification-form" novalidate hidden><div class="form-field"><label for="verification-code">Verification code</label><input id="verification-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required /><span class="field-error" id="verification-code-error"></span></div><button class="button button-dark button-full" type="submit">Verify and enter <span aria-hidden="true">↗</span></button><button id="verification-back" class="text-link verification-back" type="button">Use another contact</button></form>
       </div>
     </section>
     <main id="main-content" data-services tabindex="-1" hidden>

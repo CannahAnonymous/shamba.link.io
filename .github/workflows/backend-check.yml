@@ -21,7 +21,7 @@ jobs:
           node-version: 20
       - name: Check backend syntax
         run: node --check backend/server.js
-      - name: Smoke-test phone validation
+      - name: Smoke-test registration and duplicate prevention
         shell: bash
         run: |
           export PORT=18787
@@ -34,12 +34,18 @@ jobs:
             sleep 1
           done
           invalid_status=$(curl --silent --output /dev/null --write-out "%{http_code}" \
-            --request POST http://127.0.0.1:18787/api/auth/request-code \
+            --request POST http://127.0.0.1:18787/api/auth/register \
             --header "Content-Type: application/json" \
-            --data '{"contactType":"phone","contact":"12"}')
-          valid_status=$(curl --silent --output /dev/null --write-out "%{http_code}" \
-            --request POST http://127.0.0.1:18787/api/auth/request-code \
+            --data '{"contactType":"phone","contact":"12","name":"Test","role":"farmer","password":"correct horse"}')
+          payload='{"contactType":"phone","contact":"0741998751","name":"Test Farmer","role":"farmer","password":"correct horse"}'
+          registered_status=$(curl --silent --output /dev/null --write-out "%{http_code}" \
+            --request POST http://127.0.0.1:18787/api/auth/register \
             --header "Content-Type: application/json" \
-            --data '{"contactType":"phone","contact":"0741998751"}')
+            --data "$payload")
+          duplicate_status=$(curl --silent --output /dev/null --write-out "%{http_code}" \
+            --request POST http://127.0.0.1:18787/api/auth/register \
+            --header "Content-Type: application/json" \
+            --data "$payload")
           test "$invalid_status" = "422"
-          test "$valid_status" = "503"
+          test "$registered_status" = "201"
+          test "$duplicate_status" = "409"

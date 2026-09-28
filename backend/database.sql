@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS users (
   role TEXT NOT NULL CHECK (role IN ('farmer', 'agent', 'buyer')),
   contact TEXT NOT NULL UNIQUE,
   contact_type TEXT NOT NULL CHECK (contact_type IN ('email', 'phone')),
-  password_hash TEXT,
-  verified_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  password_salt TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
